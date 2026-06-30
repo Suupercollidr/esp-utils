@@ -20,13 +20,13 @@ EventLogger::EventLogger(InfluxDBClient &client,
         Serial.println("Inget SD-kort");
 }
 
-void EventLogger::log(const String &originalMessage, LogLevel level)
+void EventLogger::log(const String &originalMessage, LogLevel level, bool alwaysReport)
 {
 
     time_t nowTime;
     time(&nowTime);
 
-    auto logCount = shouldReport(originalMessage);
+    auto logCount = alwaysReport ? 1 : shouldReport(originalMessage);
     if (logCount == 0)
         return;
 

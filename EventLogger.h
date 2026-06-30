@@ -30,7 +30,8 @@ public:
                 const char *logFileName = "/system.log");
 
     void log(const String &message,
-             LogLevel level = LogLevel::ERROR);
+             LogLevel level = LogLevel::ERROR,
+             bool alwaysReport = false);
 
 private:
     int8_t sdDetectPin;
@@ -60,7 +61,7 @@ private:
 
     const char *levelToString(LogLevel level);
 
-    uint16_t shouldReport(const String &message); 
+    uint16_t shouldReport(const String &message);
 
     uint32_t simpleHash(const String &message); // Hash-funktion
 };
