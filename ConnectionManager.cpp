@@ -1,4 +1,3 @@
-#pragma once
 #include "ConnectionManager.h"
 
 ConnectionManager::ConnectionManager(EventLogger &logger,
@@ -14,12 +13,12 @@ ConnectionManager::ConnectionManager(EventLogger &logger,
 {
 }
 
-void ConnectionManager::begin(const char *ssid, const char *password, const char *hostname)
+void ConnectionManager::begin(const char *ssid, const char *password, const char *hostname, const int32_t channel)
 {
     _logger.log("Ansluter till WiFi " + String(ssid), EventLogger::LogLevel::INFO);
 
     WiFi.setHostname(hostname);
-    WiFi.begin(ssid, password);
+    WiFi.begin(ssid, password, channel);
 
     while (!WiFi.isConnected())
     {
@@ -28,7 +27,7 @@ void ConnectionManager::begin(const char *ssid, const char *password, const char
         delay(100);
         Serial.print("🛜  ");
     }
-    ConnectionManager::logConnectionInfo();
+    logConnectionInfo();
 }
 
 void ConnectionManager::loop()

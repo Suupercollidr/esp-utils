@@ -1,4 +1,5 @@
 #pragma once
+#include <WiFi.h>
 #include <ESP32Ping.h>
 #include "EventLogger.h"
 #include "debounce.h"
@@ -11,7 +12,7 @@ public:
                        uint32_t healthCheckIntervalMs = 30000,
                        uint8_t maxPingFails = 5);
 
-    void begin(const char* ssid, const char* password, const char* hostname);
+    void begin(const char* ssid, const char* password, const char* hostname, const int32_t channel = 0);
     void loop();
     bool isConnected() const { return WiFi.isConnected(); }
 
