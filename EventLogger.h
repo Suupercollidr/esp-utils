@@ -32,6 +32,8 @@ public:
     void log(const String &message,
              LogLevel level = LogLevel::ERROR,
              bool alwaysReport = false);
+    
+    bool writePoint(Point passthroughPoint);
 
 private:
     int8_t sdDetectPin;

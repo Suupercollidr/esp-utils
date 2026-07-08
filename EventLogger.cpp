@@ -93,6 +93,16 @@ bool EventLogger::logToInfluxDB(const char *timestamp,
     return PointSentSuccessfully;
 }
 
+bool EventLogger::writePoint(Point passthroughPoint)
+{
+    bool PointSentSuccessfully = influxClient.writePoint(passthroughPoint);
+
+    if (!PointSentSuccessfully)
+        Serial.println("InfluxDB error: " + influxClient.getLastErrorMessage());
+
+    return PointSentSuccessfully;
+}
+
 const char *EventLogger::levelToString(LogLevel level)
 {
     switch (level)
