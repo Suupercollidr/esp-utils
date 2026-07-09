@@ -27,6 +27,7 @@ void ConnectionManager::begin(const char *ssid, const char *password, const char
         delay(100);
         Serial.print("🛜  ");
     }
+    Serial.println();
     logConnectionInfo();
 }
 
