@@ -2,14 +2,14 @@
 
 ConnectionManager::ConnectionManager(EventLogger &logger,
                                      IPAddress primaryDNS, IPAddress secondaryDNS,
-                                     uint32_t reconnectIntervalMs,
-                                     uint32_t healthCheckIntervalMs,
-                                     uint8_t maxPingFails)
+                                     uint32_t allowedDowntimeBeforeRestartS,
+                                     uint32_t reconnectIntervalS,
+                                     uint32_t healthCheckIntervalS)
     : _logger(logger), _primaryDNS(primaryDNS), _secondaryDNS(secondaryDNS),
-      _reconnectInterval(reconnectIntervalMs),
-      _healthCheckInterval(healthCheckIntervalMs),
-      _initialConnectTimeout(30000),
-      _maxPingFails(maxPingFails)
+      _allowedDowntimeBeforeRestartMs(allowedDowntimeBeforeRestartS * 1000),
+      _reconnectInterval(reconnectIntervalS * 1000),
+      _healthCheckInterval(healthCheckIntervalS * 1000),
+      _initialConnectTimeout(30000)
 {
 }
 
@@ -40,24 +40,29 @@ void ConnectionManager::loop()
             _logger.log("Återansluter till WiFi", EventLogger::LogLevel::INFO);
             WiFi.reconnect();
         }
+        registerFailure();
         return;
     }
 
-    if (_healthCheckInterval.ready())
-        checkHealth();
+    if (!_healthCheckInterval.ready())
+        return;
+
+    if (Ping.ping(_primaryDNS, 1) || Ping.ping(_secondaryDNS, 1))
+    {
+        _disconnectedSinceMs = 0;
+        return;
+    }
+
+    registerFailure();
 }
 
-void ConnectionManager::checkHealth()
+void ConnectionManager::registerFailure()
 {
-    if (Ping.ping(_primaryDNS) || Ping.ping(_secondaryDNS))
-    {
-        _pingFails = 0;
-        return;
-    }
+    if (_disconnectedSinceMs == 0)
+        _disconnectedSinceMs = millis();
 
-    _logger.log("Inget svar från DNS-servrar", EventLogger::LogLevel::WARNING);
-    if (++_pingFails > _maxPingFails)
-        restart("Upprepade DNS-fel");
+    if (millis() - _disconnectedSinceMs > _allowedDowntimeBeforeRestartMs)
+        restart("Ingen fungerande anslutning under en längre period");
 }
 
 void ConnectionManager::restart(const String &reason)
