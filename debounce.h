@@ -26,6 +26,11 @@ public:
         return false;
     }
 
+    void reset()
+    {
+        _lastTrigger = millis();
+    }
+
 private:
     uint32_t _delayMs;
     volatile uint32_t _lastTrigger;
