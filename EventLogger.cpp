@@ -85,22 +85,81 @@ bool EventLogger::logToInfluxDB(const char *timestamp,
     logPoint.addField("message", message);
     logPoint.addField("timestamp", timestamp);
 
-    bool PointSentSuccessfully = influxClient.writePoint(logPoint);
+    bool pointSentSuccessfully = influxClient.writePoint(logPoint);
 
-    if (!PointSentSuccessfully)
-        Serial.println("InfluxDB error: " + influxClient.getLastErrorMessage());
+    if (!pointSentSuccessfully)
+    {
+        String lineProtocol = logPoint.toLineProtocol();
+        savePointToLittleFS(lineProtocol);
+    }
 
-    return PointSentSuccessfully;
+    return pointSentSuccessfully;
 }
 
 bool EventLogger::writePoint(Point passthroughPoint)
 {
-    bool PointSentSuccessfully = influxClient.writePoint(passthroughPoint);
+    bool pointSentSuccessfully = influxClient.writePoint(passthroughPoint);
 
-    if (!PointSentSuccessfully)
+    if (!pointSentSuccessfully)
         Serial.println("InfluxDB error: " + influxClient.getLastErrorMessage());
 
-    return PointSentSuccessfully;
+    return pointSentSuccessfully;
+}
+
+void EventLogger::savePointToLittleFS(const String &lineProtocol)
+{
+    File file = LittleFS.open("/pending.log", "a");
+    if (file)
+    {
+        file.println(lineProtocol);
+        file.close();
+        return;
+    }
+
+    Serial.println("Fel: Kunde inte spara till LittleFS");
+}
+
+void EventLogger::sendPendingPoints()
+{
+    if (!LittleFS.exists("/pending.log"))
+        return;
+
+    File file = LittleFS.open("/pending.log", "r");
+    if (!file)
+        return;
+
+    File tempFile = LittleFS.open("/pending_temp.log", "w");
+    if (!tempFile)
+    {
+        file.close();
+        return;
+    }
+
+    while (file.available())
+    {
+        String line = file.readStringUntil('\n');
+        if (line.length() > 0)
+        {
+            // Skicka direkt som raw Line Protocol
+            if (influxClient.writeRecord(line))
+            {
+                Serial.println("Skickad sparad punkt: " + line);
+            }
+            else
+            {
+                // Om skickning misslyckas, spara tillbaka
+                tempFile.println(line);
+                Serial.println("Misslyckades, sparar om: " + line);
+            }
+        }
+    }
+
+    file.close();
+    tempFile.close();
+
+    // Ersätt originalfilen med tempfilen (innehåller bara misslyckade)
+    LittleFS.remove("/pending.log");
+    LittleFS.rename("/pending_temp.log", "/pending.log");
 }
 
 const char *EventLogger::levelToString(LogLevel level)

@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <InfluxDbClient.h>
 #include <FS.h>
+#include <LittleFS.h>
 
 class EventLogger
 {
@@ -32,8 +33,10 @@ public:
     void log(const String &message,
              LogLevel level = LogLevel::ERROR,
              bool alwaysReport = false);
-    
+
     bool writePoint(Point passthroughPoint);
+
+    void sendPendingPoints();
 
 private:
     int8_t sdDetectPin;
@@ -60,6 +63,8 @@ private:
     bool logToInfluxDB(const char *timestamp,
                        const String &message,
                        LogLevel level);
+
+    void savePointToLittleFS(const String &lineProtocol);
 
     const char *levelToString(LogLevel level);
 
