@@ -19,22 +19,15 @@ void ConnectionManager::begin(const char *ssid, const char *password, const char
 
     WiFi.setHostname(hostname);
     WiFi.begin(ssid, password, channel);
-
-    while (!WiFi.isConnected())
-    {
-        if (_initialConnectTimeout.ready())
-            restart("Kunde inte ansluta till WiFi vid uppstart");
-        delay(100);
-        Serial.print("🛜  ");
-    }
-    Serial.println();
-    logConnectionInfo();
 }
 
 void ConnectionManager::loop()
 {
     if (!WiFi.isConnected())
     {
+        if (_state != ConnState::DISCONNECTED)
+            transitionTo(ConnState::DISCONNECTED, "WiFi frånkopplad");
+
         if (_reconnectInterval.ready())
         {
             _logger.log("Återansluter till WiFi", EventLogger::LogLevel::INFO);
@@ -44,24 +37,44 @@ void ConnectionManager::loop()
         return;
     }
 
+    if (_state == ConnState::DISCONNECTED)
+        transitionTo(ConnState::WIFI_ONLY, "WiFi ansluten, försöker kontakta DNS-server");
+
     if (!_healthCheckInterval.ready())
         return;
 
     if (Ping.ping(_primaryDNS, 1) || Ping.ping(_secondaryDNS, 1))
     {
-        _disconnectedSinceMs = 0;
+        _downtimeTimeout.reset();
+        if (_state != ConnState::CONNECTED)
+            transitionTo(ConnState::CONNECTED, "Svar från DNS-server");
+
         return;
     }
 
     registerFailure();
 }
 
+void ConnectionManager::transitionTo(ConnState newState, const String &reason)
+{
+    _state = newState;
+    _logger.log(reason, EventLogger::LogLevel::INFO);
+
+    if (newState == ConnState::CONNECTED)
+    {
+        logConnectionInfo();
+        if (_onInternetUp)
+            _onInternetUp();
+        return;
+    }
+
+    if (_onInternetDown)
+        _onInternetDown();
+}
+
 void ConnectionManager::registerFailure()
 {
-    if (_disconnectedSinceMs == 0)
-        _disconnectedSinceMs = millis();
-
-    if (millis() - _disconnectedSinceMs > _allowedDowntimeBeforeRestartMs)
+    if (_downtimeTimeout.ready())
         restart("Ingen fungerande anslutning under en längre period");
 }
 
@@ -77,8 +90,8 @@ void ConnectionManager::logConnectionInfo()
     _logger.log("Ansluten till WiFi", EventLogger::LogLevel::INFO);
 
     Point netStat("Network");
+    netStat.addTag("Hostname", WiFi.getHostname());
     netStat.addField("Channel", WiFi.channel());
-    netStat.addField("Hostname", WiFi.getHostname());
     netStat.addField("IP address", WiFi.localIP().toString());
     netStat.addField("Gateway", WiFi.gatewayIP().toString());
     netStat.addField("MAC address", WiFi.macAddress());
