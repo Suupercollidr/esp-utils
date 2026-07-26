@@ -28,13 +28,14 @@ public:
 
     EventLogger(InfluxDBClient &client,
                 int8_t sdDetectPin = -1,
-                const char *logFileName = "/system.log");
+                const char *logFileName = "/system.log",
+                const String deviceName = "");
 
     void log(const String &message,
              LogLevel level = LogLevel::ERROR,
              bool alwaysReport = false);
 
-    bool writePoint(Point passthroughPoint);
+    bool writePoint(Point pointToWrite);
 
     void sendPendingPoints();
 
@@ -43,6 +44,7 @@ private:
     int lastSdDetectState = -1;
     bool sdAvailable = false;
     const char *logFileName;
+    const String deviceName;
     struct LogEntry
     {
         unsigned long lastTime; // Tidpunkt för senaste loggningen
@@ -60,11 +62,12 @@ private:
                    const String &message,
                    LogLevel level);
 
-    bool logToInfluxDB(const char *timestamp,
-                       const String &message,
-                       LogLevel level);
+    Point makePoint(const char *timestamp,
+                    const String &message,
+                    LogLevel level);
 
-    void savePointToLittleFS(const String &lineProtocol);
+    void savePointToLittleFS(Point &logPoint,
+                             time_t &nowTime);
 
     const char *levelToString(LogLevel level);
 

@@ -5,11 +5,13 @@
 
 EventLogger::EventLogger(InfluxDBClient &client,
                          int8_t sdDetectPin,
-                         const char *logFileName)
+                         const char *logFileName,
+                         const String deviceName)
 
     : influxClient(client),
       sdDetectPin(sdDetectPin),
-      logFileName(logFileName)
+      logFileName(logFileName),
+      deviceName(deviceName)
 {
     if (sdDetectPin >= 0)
         pinMode(sdDetectPin, INPUT_PULLUP);
@@ -22,7 +24,6 @@ EventLogger::EventLogger(InfluxDBClient &client,
 
 void EventLogger::log(const String &originalMessage, LogLevel level, bool alwaysReport)
 {
-
     time_t nowTime;
     time(&nowTime);
 
@@ -46,8 +47,13 @@ void EventLogger::log(const String &originalMessage, LogLevel level, bool always
     if (checkSDStatus())
         fileSuccess = logToFile(timestamp, message, level);
 
+    Point logPoint = makePoint(timestamp, message, level);
+
     if (WiFi.status() == WL_CONNECTED)
-        influxSuccess = logToInfluxDB(timestamp, message, level);
+        influxSuccess = writePoint(logPoint);
+
+    if (!influxSuccess)
+        savePointToLittleFS(logPoint, nowTime);
 
     Serial.print(timestamp);
     Serial.print("\t");
@@ -76,29 +82,21 @@ bool EventLogger::logToFile(const char *timestamp,
     return true;
 }
 
-bool EventLogger::logToInfluxDB(const char *timestamp,
-                                const String &message,
-                                LogLevel level)
+Point EventLogger::makePoint(const char *timestamp,
+                             const String &message,
+                             LogLevel level)
 {
     Point logPoint("EventLog");
     logPoint.addTag("level", levelToString(level));
+    logPoint.addTag("device", deviceName);
     logPoint.addField("message", message);
-    logPoint.addField("timestamp", timestamp);
-
-    bool pointSentSuccessfully = influxClient.writePoint(logPoint);
-
-    if (!pointSentSuccessfully)
-    {
-        String lineProtocol = logPoint.toLineProtocol();
-        savePointToLittleFS(lineProtocol);
-    }
-
-    return pointSentSuccessfully;
+    //logPoint.addField("timestamp", timestamp);
+    return logPoint;
 }
 
-bool EventLogger::writePoint(Point passthroughPoint)
+bool EventLogger::writePoint(Point pointToWrite)
 {
-    bool pointSentSuccessfully = influxClient.writePoint(passthroughPoint);
+    bool pointSentSuccessfully = influxClient.writePoint(pointToWrite);
 
     if (!pointSentSuccessfully)
         Serial.println("InfluxDB error: " + influxClient.getLastErrorMessage());
@@ -106,9 +104,15 @@ bool EventLogger::writePoint(Point passthroughPoint)
     return pointSentSuccessfully;
 }
 
-void EventLogger::savePointToLittleFS(const String &lineProtocol)
+void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
 {
     File file = LittleFS.open("/pending.log", "a");
+
+    unsigned long long pointTimestampNs = (unsigned long long)nowTime * 1000000000ULL;
+    logPoint.setTime(pointTimestampNs);
+
+    String lineProtocol = logPoint.toLineProtocol();
+
     if (file)
     {
         file.println(lineProtocol);
@@ -135,6 +139,8 @@ void EventLogger::sendPendingPoints()
         return;
     }
 
+    uint32_t logLineCount = 0;
+
     while (file.available())
     {
         String line = file.readStringUntil('\n');
@@ -144,6 +150,7 @@ void EventLogger::sendPendingPoints()
             if (influxClient.writeRecord(line))
             {
                 Serial.println("Skickad sparad punkt: " + line);
+                logLineCount++;
             }
             else
             {
@@ -160,6 +167,8 @@ void EventLogger::sendPendingPoints()
     // Ersätt originalfilen med tempfilen (innehåller bara misslyckade)
     LittleFS.remove("/pending.log");
     LittleFS.rename("/pending_temp.log", "/pending.log");
+
+    log("Skickade " + String(logLineCount) + " väntande meddelanden vid uppstart", EventLogger::LogLevel::INFO);
 }
 
 const char *EventLogger::levelToString(LogLevel level)
