@@ -90,7 +90,7 @@ Point EventLogger::makePoint(const char *timestamp,
     logPoint.addTag("level", levelToString(level));
     logPoint.addTag("device", deviceName);
     logPoint.addField("message", message);
-    //logPoint.addField("timestamp", timestamp);
+    // logPoint.addField("timestamp", timestamp);
     return logPoint;
 }
 
@@ -126,15 +126,21 @@ void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
 void EventLogger::sendPendingPoints()
 {
     if (!LittleFS.exists("/pending.log"))
+    {
+        log("Inga sparade loggmeddelanden att skicka", EventLogger::LogLevel::INFO);
         return;
-
+    }
+    
     File file = LittleFS.open("/pending.log", "r");
     if (!file)
+    {
+        log("Kunde inte öppna filen med sparade loggmeddelanden", EventLogger::LogLevel::ERROR);
         return;
-
+    }
     File tempFile = LittleFS.open("/pending_temp.log", "w");
     if (!tempFile)
     {
+        log("Kunde inte öppna filen för att tillfälligt spara loggmeddelanden", EventLogger::LogLevel::ERROR);
         file.close();
         return;
     }
