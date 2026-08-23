@@ -39,7 +39,7 @@ void EventLogger::log(const String &originalMessage, LogLevel level, bool always
     strftime(timestamp, sizeof(timestamp),
              "%Y-%m-%d\t%H:%M:%S", localtime(&nowTime));
 
-    static const char *levelStr = levelToString(level);
+    const char *levelStr = levelToString(level);
 
     bool fileSuccess = false;
     bool influxSuccess = false;
@@ -136,45 +136,46 @@ void EventLogger::sendPendingPoints()
     {
         log("Kunde inte öppna filen med sparade loggmeddelanden", EventLogger::LogLevel::ERROR);
         return;
-    }
-    File tempFile = LittleFS.open("/pending_temp.log", "w");
-    if (!tempFile)
-    {
-        log("Kunde inte öppna filen för att tillfälligt spara loggmeddelanden", EventLogger::LogLevel::ERROR);
-        file.close();
-        return;
-    }
 
     uint32_t logLineCount = 0;
+    const size_t maxLines = 200;
+    std::deque<String> lines;
 
     while (file.available())
     {
         String line = file.readStringUntil('\n');
-        if (line.length() > 0)
-        {
-            // Skicka direkt som raw Line Protocol
-            if (influxClient.writeRecord(line))
-            {
-                Serial.println("Skickad sparad punkt: " + line);
-                logLineCount++;
-            }
-            else
-            {
-                // Om skickning misslyckas, spara tillbaka
-                tempFile.println(line);
-                Serial.println("Misslyckades, sparar om: " + line);
-            }
-        }
+        if (line.length() == 0)
+            continue;
+
+        lines.push_back(line);
+        if (lines.size() > maxLines)
+        lines.pop_front();
     }
 
     file.close();
-    tempFile.close();
 
-    // Ersätt originalfilen med tempfilen (innehåller bara misslyckade)
-    LittleFS.remove("/pending.log");
-    LittleFS.rename("/pending_temp.log", "/pending.log");
+    if (lines.empty())
+    {
+        LittleFS.remove("/pending.log");
+        return;
+    }
 
-    log("Skickade " + String(logLineCount) + " väntande meddelanden vid uppstart", EventLogger::LogLevel::INFO);
+    String batch;
+    for (auto &l : lines)
+    {
+        batch += l;
+        batch += "\n";
+    }
+
+    if (influxClient.writeRecord(batch))
+    {
+        LittleFS.remove("/pending.log");
+        log("Skickade " + String(lines.size()) + " väntande meddelanden vid uppstart", LogLevel::INFO);
+    }
+    else
+    {
+        Serial.println("Misslyckades skicka väntande meddelanden, behåller filen");
+    }
 }
 
 const char *EventLogger::levelToString(LogLevel level)

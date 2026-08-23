@@ -14,6 +14,8 @@
 #include <InfluxDbClient.h>
 #include <FS.h>
 #include <LittleFS.h>
+#include <ping.h>
+#include <deque>
 
 class EventLogger
 {
