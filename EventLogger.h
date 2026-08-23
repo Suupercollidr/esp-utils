@@ -1,6 +1,12 @@
-
 /**
- * @brief Logs events to InfluxDB, a CSV file, and prints them to serial
+ * @brief Logs events to InfluxDB, a CSV file, and (when connectivity allows) reports state.
+ *
+ * Skickningar mot InfluxDB skyddas av en CircuitBreaker: efter ett par
+ * misslyckade försök i rad slutar vi helt att försöka i några minuter
+ * (istället för att blockera huvudloopen med upprepade timeouts), och
+ * sparar allt lokalt på LittleFS under tiden. sendPendingPoints() körs
+ * periodiskt via maintain() - inte bara vid uppstart - så kön töms så
+ * fort anslutningen är tillbaka.
  *
  * @param client InfluxDBClient object where we can send the event
  * @param sdDetectPin (optional) GPIO pin that is low when an SD card is inserted
@@ -16,6 +22,9 @@
 #include <LittleFS.h>
 #include <ping.h>
 #include <deque>
+#include <vector>
+#include <unordered_map>
+#include "AmIOnline.h"
 
 class EventLogger
 {
@@ -31,7 +40,9 @@ public:
     EventLogger(InfluxDBClient &client,
                 int8_t sdDetectPin = -1,
                 const char *logFileName = "/system.log",
-                const String deviceName = "");
+                const String deviceName = "",
+                uint8_t influxFailureThreshold = 3,
+                unsigned long influxCooldownMs = 5UL * 60UL * 1000UL);
 
     void log(const String &message,
              LogLevel level = LogLevel::ERROR,
@@ -41,11 +52,24 @@ public:
 
     void sendPendingPoints();
 
+    /**
+     * Anropa denna regelbundet från loop() (t.ex. varje varv, eller minst
+     * varje sekund). Den är billig att anropa ofta - den gör bara ett
+     * riktigt nätverksförsök när circuit breakern faktiskt tillåter det.
+     * Hanterar både periodisk tömning av kön och rapportering av
+     * online/offline-övergångar.
+     */
+    void maintain();
+
+    AmIOnline::State getInfluxConnectionState() const { return influxBreaker.getState(); }
+    uint32_t getDroppedPointsCount() const { return droppedPointsCount; }
+
 private:
     int8_t sdDetectPin;
     int lastSdDetectState = -1;
     bool sdAvailable = false;
     const char *logFileName;
+    const char *pendingLogFileName = "/pending.log";
     const String deviceName;
     struct LogEntry
     {
@@ -57,6 +81,12 @@ private:
     const unsigned long suppressionPeriod = 86400000; // 1d i millisekunder
 
     InfluxDBClient &influxClient;
+    AmIOnline influxBreaker;
+
+    // Skydd mot att fylla hela flashen om nätverket är nere länge.
+    static const size_t maxPendingFileSizeBytes = 200UL * 1024UL; // 200 KB
+    static const size_t maxLinesPerBatch = 200;
+    uint32_t droppedPointsCount = 0;
 
     bool checkSDStatus();
 
@@ -70,6 +100,8 @@ private:
 
     void savePointToLittleFS(Point &logPoint,
                              time_t &nowTime);
+
+    void reportInfluxStateChangeIfAny();
 
     const char *levelToString(LogLevel level);
 

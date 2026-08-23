@@ -6,12 +6,15 @@
 EventLogger::EventLogger(InfluxDBClient &client,
                          int8_t sdDetectPin,
                          const char *logFileName,
-                         const String deviceName)
+                         const String deviceName,
+                         uint8_t influxFailureThreshold,
+                         unsigned long influxCooldownMs)
 
     : influxClient(client),
       sdDetectPin(sdDetectPin),
       logFileName(logFileName),
-      deviceName(deviceName)
+      deviceName(deviceName),
+      influxBreaker(influxFailureThreshold, influxCooldownMs, "InfluxDB")
 {
     if (sdDetectPin >= 0)
         pinMode(sdDetectPin, INPUT_PULLUP);
@@ -49,11 +52,12 @@ void EventLogger::log(const String &originalMessage, LogLevel level, bool always
 
     Point logPoint = makePoint(timestamp, message, level);
 
-    if (WiFi.status() == WL_CONNECTED)
-        influxSuccess = writePoint(logPoint);
+    influxSuccess = writePoint(logPoint);
 
     if (!influxSuccess)
         savePointToLittleFS(logPoint, nowTime);
+
+    reportInfluxStateChangeIfAny();
 
     Serial.print(timestamp);
     Serial.print("\t");
@@ -96,50 +100,73 @@ Point EventLogger::makePoint(const char *timestamp,
 
 bool EventLogger::writePoint(Point pointToWrite)
 {
-    bool pointSentSuccessfully = influxClient.writePoint(pointToWrite);
+    // Circuit breaker: om vi redan vet att InfluxDB är nere, gör inte ens
+    // försöket. Det här är kärnfixen mot "eviga time-outs" - istället för
+    // att varje enskilt loggmeddelande blockerar loopen i flera sekunder
+    // under en nätverksstörning, ger vi upp direkt tills cooldown gått ut.
+    if (!influxBreaker.canAttempt())
+        return false;
 
-    if (!pointSentSuccessfully)
+    if (!influxClient.writePoint(pointToWrite))
+    {
+        influxBreaker.recordFailure();
         Serial.println("InfluxDB error: " + influxClient.getLastErrorMessage());
+        return false;
+    }
 
-    return pointSentSuccessfully;
+    influxBreaker.recordSuccess();
+    return true;
 }
 
 void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
 {
-    File file = LittleFS.open("/pending.log", "a");
+    File file = LittleFS.open(pendingLogFileName, "a");
+
+    if (!file)
+    {
+        Serial.println("Fel: Kunde inte spara till LittleFS");
+        return;
+    }
+    
+    if (file.size() > maxPendingFileSizeBytes)
+    {
+        file.close();
+        Serial.println("Fel: Bufferten är full, loggmeddelandet kastades");
+        return;
+    }
 
     unsigned long long pointTimestampNs = (unsigned long long)nowTime * 1000000000ULL;
     logPoint.setTime(pointTimestampNs);
 
     String lineProtocol = logPoint.toLineProtocol();
 
-    if (file)
-    {
-        file.println(lineProtocol);
-        file.close();
-        return;
-    }
-
-    Serial.println("Fel: Kunde inte spara till LittleFS");
+    file.println(lineProtocol);
+    file.close();
 }
 
 void EventLogger::sendPendingPoints()
 {
-    if (!LittleFS.exists("/pending.log"))
-    {
-        log("Inga sparade loggmeddelanden att skicka", EventLogger::LogLevel::INFO);
+    if (!LittleFS.exists(pendingLogFileName))
         return;
-    }
-    
-    File file = LittleFS.open("/pending.log", "r");
+
+    // Fråga breakern istället för att bara pröva blint - annars gör vi ett
+    // blockerande nätverksförsök varje gång maintain() råkar anropas medan
+    // vi redan vet att vi är nere.
+    if (!influxBreaker.canAttempt())
+        return;
+
+    File file = LittleFS.open(pendingLogFileName, "r");
     if (!file)
     {
         log("Kunde inte öppna filen med sparade loggmeddelanden", EventLogger::LogLevel::ERROR);
         return;
 
-    uint32_t logLineCount = 0;
-    const size_t maxLines = 200;
-    std::deque<String> lines;
+    // Läs igenom HELA filen, men dela upp i en batch (som vi försöker
+    // skicka nu) och en rest (som skrivs tillbaka om batchen lyckas).
+    // Detta ersätter den gamla logiken som tystlåtet kastade bort allt
+    // utöver de sista 200 raderna så fort filen väl skickades.
+    std::vector<String> batchLines;
+    std::vector<String> remainingLines;
 
     while (file.available())
     {
@@ -147,34 +174,80 @@ void EventLogger::sendPendingPoints()
         if (line.length() == 0)
             continue;
 
-        lines.push_back(line);
-        if (lines.size() > maxLines)
-        lines.pop_front();
+        if (batchLines.size() < maxLinesPerBatch)
+            batchLines.push_back(line);
+        else
+            remainingLines.push_back(line);
     }
-
     file.close();
 
-    if (lines.empty())
+    if (batchLines.empty())
     {
-        LittleFS.remove("/pending.log");
+        LittleFS.remove(pendingLogFileName);
         return;
     }
 
     String batch;
-    for (auto &l : lines)
+    for (auto &l : batchLines)
     {
         batch += l;
         batch += "\n";
     }
 
-    if (influxClient.writeRecord(batch))
+    bool ok = influxClient.writeRecord(batch);
+
+    if (ok)
+        influxBreaker.recordSuccess();
+    else
+        influxBreaker.recordFailure();
+
+    if (!ok)
+        return; // Filen orörd - försök igen nästa gång maintain() kallas
+
+    if (remainingLines.empty())
     {
-        LittleFS.remove("/pending.log");
-        log("Skickade " + String(lines.size()) + " väntande meddelanden vid uppstart", LogLevel::INFO);
+        LittleFS.remove(pendingLogFileName);
     }
     else
     {
-        Serial.println("Misslyckades skicka väntande meddelanden, behåller filen");
+        // Fortfarande kö kvar (fler än maxLinesPerBatch rader väntade) -
+        // skriv tillbaka resten så den skickas vid nästa anrop.
+        File out = LittleFS.open(pendingLogFileName, "w");
+        if (out)
+        {
+            for (auto &l : remainingLines)
+                out.println(l);
+            out.close();
+        }
+    }
+
+    log("Skickade " + String(batchLines.size()) + " väntande meddelanden (" + String(remainingLines.size()) + " kvar i kö)",
+        LogLevel::INFO, true);
+}
+
+void EventLogger::maintain()
+{
+    // Billig att anropa varje loop-varv: sendPendingPoints() returnerar
+    // omedelbart om det inte finns någon kö, eller om breakern säger att
+    // vi ändå inte får försöka just nu.
+    sendPendingPoints();
+    reportInfluxStateChangeIfAny();
+}
+
+void EventLogger::reportInfluxStateChangeIfAny()
+{
+    if (!influxBreaker.consumeStateChangeFlag())
+        return;
+
+    if (influxBreaker.getState() == AmIOnline::State::ONLINE)
+    {
+        log("InfluxDB-anslutning återställd", LogLevel::INFO, true);
+    }
+    else
+    {
+        unsigned long retryMinutes = influxBreaker.getMsUntilRetry() / 60000UL;
+        log("InfluxDB otillgänglig efter " + String(influxBreaker.getConsecutiveFailures()) + " misslyckade försök - försöker igen om ca " + String(retryMinutes) + " min",
+            LogLevel::WARNING, true);
     }
 }
 
