@@ -160,7 +160,8 @@ void EventLogger::sendPendingPoints()
     {
         log("Kunde inte öppna filen med sparade loggmeddelanden", EventLogger::LogLevel::ERROR);
         return;
-
+    }
+    
     // Läs igenom HELA filen, men dela upp i en batch (som vi försöker
     // skicka nu) och en rest (som skrivs tillbaka om batchen lyckas).
     // Detta ersätter den gamla logiken som tystlåtet kastade bort allt
