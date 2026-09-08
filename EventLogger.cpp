@@ -25,6 +25,9 @@ EventLogger::EventLogger(InfluxDBClient &client,
         Serial.println("Inget SD-kort");
 
     littleFsAvailable = LittleFS.begin(true);
+
+    if (!littleFsAvailable)
+        littleFsErrorReported = true;
 }
 
 void EventLogger::log(const String &originalMessage, LogLevel level, bool alwaysReport)
@@ -153,7 +156,7 @@ void EventLogger::sendPendingPoints()
 {
     if (!littleFsAvailable)
         return;
-        
+
     if (!LittleFS.exists(pendingLogFileName))
         return;
 
@@ -241,6 +244,12 @@ void EventLogger::maintain()
     // vi ändå inte får försöka just nu.
     sendPendingPoints();
     reportInfluxStateChangeIfAny();
+
+    if (littleFsErrorReported)
+    {
+        log("LittleFS: Kunde inte initiera, loggmeddelanden kommer inte att sparas lokalt", LogLevel::ERROR, true);
+        littleFsErrorReported = false;
+    }
 }
 
 void EventLogger::reportInfluxStateChangeIfAny()
