@@ -68,6 +68,7 @@ private:
     int8_t sdDetectPin;
     int lastSdDetectState = -1;
     bool sdAvailable = false;
+    bool littleFsAvailable = false;
     const char *logFileName;
     const char *pendingLogFileName = "/pending.log";
     const String deviceName;

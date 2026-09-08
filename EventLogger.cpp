@@ -23,6 +23,8 @@ EventLogger::EventLogger(InfluxDBClient &client,
     sdAvailable = false; // Turn off b/c broken
     if (!sdAvailable)
         Serial.println("Inget SD-kort");
+
+    littleFsAvailable = LittleFS.begin(true);
 }
 
 void EventLogger::log(const String &originalMessage, LogLevel level, bool alwaysReport)
@@ -120,6 +122,9 @@ bool EventLogger::writePoint(Point pointToWrite)
 
 void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
 {
+    if (!littleFsAvailable)
+        return;
+
     File file = LittleFS.open(pendingLogFileName, "a");
 
     if (!file)
@@ -127,7 +132,7 @@ void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
         Serial.println("Fel: Kunde inte spara till LittleFS");
         return;
     }
-    
+
     if (file.size() > maxPendingFileSizeBytes)
     {
         file.close();
@@ -146,6 +151,9 @@ void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
 
 void EventLogger::sendPendingPoints()
 {
+    if (!littleFsAvailable)
+        return;
+        
     if (!LittleFS.exists(pendingLogFileName))
         return;
 
@@ -161,7 +169,7 @@ void EventLogger::sendPendingPoints()
         log("Kunde inte öppna filen med sparade loggmeddelanden", EventLogger::LogLevel::ERROR);
         return;
     }
-    
+
     // Läs igenom HELA filen, men dela upp i en batch (som vi försöker
     // skicka nu) och en rest (som skrivs tillbaka om batchen lyckas).
     // Detta ersätter den gamla logiken som tystlåtet kastade bort allt
