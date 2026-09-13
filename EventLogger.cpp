@@ -186,7 +186,7 @@ void EventLogger::sendPendingPoints()
     std::vector<String> batchLines;
     std::vector<String> remainingLines;
 
-    while (file.available())
+    while (file.available() && batchLines.size() < maxLinesPerBatch)
     {
         String line = file.readStringUntil('\n');
         if (line.length() == 0)
@@ -373,7 +373,7 @@ void EventLogger::logAsync(const String &message, LogLevel level, bool alwaysRep
 {
     if (logQueue == nullptr)
         return;
-        
+
     LogRequest req;
     strncpy(req.message, message.c_str(), sizeof(req.message) - 1);
     req.message[sizeof(req.message) - 1] = '\0';
