@@ -16,6 +16,10 @@ EventLogger::EventLogger(InfluxDBClient &client,
       deviceName(deviceName),
       influxBreaker(influxFailureThreshold, influxCooldownMs, "InfluxDB")
 {
+}
+
+void EventLogger::begin()
+{
     if (sdDetectPin >= 0)
         pinMode(sdDetectPin, INPUT_PULLUP);
 

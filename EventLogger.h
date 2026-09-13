@@ -44,6 +44,8 @@ public:
                 uint8_t influxFailureThreshold = 3,
                 unsigned long influxCooldownMs = 5UL * 60UL * 1000UL);
 
+    void begin();
+
     void log(const String &message,
              LogLevel level = LogLevel::ERROR,
              bool alwaysReport = false);
