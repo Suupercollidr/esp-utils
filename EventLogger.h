@@ -50,6 +50,10 @@ public:
              LogLevel level = LogLevel::ERROR,
              bool alwaysReport = false);
 
+    void logAsync(const String &message,
+                  LogLevel level = LogLevel::ERROR,
+                  bool alwaysReport = false);
+
     bool writePoint(Point pointToWrite);
 
     void sendPendingPoints();
@@ -94,6 +98,8 @@ private:
 
     bool checkSDStatus();
 
+    QueueHandle_t logQueue;
+
     bool logToFile(const char *timestamp,
                    const String &message,
                    LogLevel level);
@@ -112,4 +118,11 @@ private:
     uint16_t shouldReport(const String &message);
 
     uint32_t simpleHash(const String &message); // Hash-funktion
+    
+    struct LogRequest
+    {
+        char message[128];
+        LogLevel level;
+        bool alwaysReport;
+    };
 };

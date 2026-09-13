@@ -20,6 +20,8 @@ EventLogger::EventLogger(InfluxDBClient &client,
 
 void EventLogger::begin()
 {
+    logQueue = xQueueCreate(16, sizeof(LogRequest));
+
     if (sdDetectPin >= 0)
         pinMode(sdDetectPin, INPUT_PULLUP);
 
@@ -246,6 +248,13 @@ void EventLogger::maintain()
     // Billig att anropa varje loop-varv: sendPendingPoints() returnerar
     // omedelbart om det inte finns någon kö, eller om breakern säger att
     // vi ändå inte får försöka just nu.
+
+    LogRequest req;
+    while (xQueueReceive(logQueue, &req, 0) == pdTRUE)
+    {
+        log(req.message, req.level, req.alwaysReport); // den "riktiga", ev. blockerande varianten
+    }
+
     sendPendingPoints();
     reportInfluxStateChangeIfAny();
 
@@ -358,4 +367,20 @@ uint32_t EventLogger::simpleHash(const String &str)
         hash = ((hash << 5) + hash) + str[i]; // hash * 33 + c
     }
     return hash;
+}
+
+void EventLogger::logAsync(const String &message, LogLevel level, bool alwaysReport)
+{
+    if (logQueue == nullptr)
+        return;
+        
+    LogRequest req;
+    strncpy(req.message, message.c_str(), sizeof(req.message) - 1);
+    req.message[sizeof(req.message) - 1] = '\0';
+    req.level = level;
+    req.alwaysReport = alwaysReport;
+
+    // Timeout 0 = vänta aldrig. Om kön är full kastas meddelandet hellre
+    // än att blockera async_tcp-tasken (vilket var precis det vi ville undvika).
+    xQueueSend(logQueue, &req, 0);
 }
