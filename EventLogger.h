@@ -98,6 +98,8 @@ private:
 
     bool checkSDStatus();
 
+    bool testLittleFsReadWrite();
+
     QueueHandle_t logQueue;
 
     bool logToFile(const char *timestamp,

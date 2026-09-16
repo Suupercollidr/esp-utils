@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <SD.h>
 #include <time.h>
+#include <debounce.h>
 
 EventLogger::EventLogger(InfluxDBClient &client,
                          int8_t sdDetectPin,
@@ -32,12 +33,17 @@ void EventLogger::begin()
 
     littleFsAvailable = LittleFS.begin(true);
 
+    if (littleFsAvailable)
+        littleFsAvailable = testLittleFsReadWrite();
+
     if (!littleFsAvailable)
-        littleFsErrorReported = true;
-}
+        littleFsErrorReported = true;}
 
 void EventLogger::log(const String &originalMessage, LogLevel level, bool alwaysReport)
 {
+    if (originalMessage.c_str() == nullptr || originalMessage.length() == 0)
+        return;
+
     time_t nowTime;
     time(&nowTime);
 
@@ -78,6 +84,22 @@ void EventLogger::log(const String &originalMessage, LogLevel level, bool always
     Serial.print(influxSuccess ? " (sent to InfluxDB," : " (not sent to InfluxDB,");
     Serial.print(fileSuccess ? " written to file)" : " not written to file)");
     Serial.println();
+}
+
+void EventLogger::logAsync(const String &message, LogLevel level, bool alwaysReport)
+{
+    if (logQueue == nullptr || message.c_str() == nullptr || message.length() == 0)
+        return;
+
+    LogRequest req;
+    strncpy(req.message, message.c_str(), sizeof(req.message) - 1);
+    req.message[sizeof(req.message) - 1] = '\0';
+    req.level = level;
+    req.alwaysReport = alwaysReport;
+
+    // Timeout 0 = vänta aldrig. Om kön är full kastas meddelandet hellre
+    // än att blockera async_tcp-tasken (vilket var precis det vi ville undvika).
+    xQueueSend(logQueue, &req, 0);
 }
 
 bool EventLogger::logToFile(const char *timestamp,
@@ -134,6 +156,9 @@ void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
     if (!littleFsAvailable)
         return;
 
+    if (nowTime < 1700000000)
+        return;
+
     File file = LittleFS.open(pendingLogFileName, "a");
 
     if (!file)
@@ -160,6 +185,10 @@ void EventLogger::savePointToLittleFS(Point &logPoint, time_t &nowTime)
 
 void EventLogger::sendPendingPoints()
 {
+    static Debounce pendingRetryTimer(10000); // max var 10:e sekund
+    if (!pendingRetryTimer.ready())
+        return;
+
     if (!littleFsAvailable)
         return;
 
@@ -369,18 +398,37 @@ uint32_t EventLogger::simpleHash(const String &str)
     return hash;
 }
 
-void EventLogger::logAsync(const String &message, LogLevel level, bool alwaysReport)
+bool EventLogger::testLittleFsReadWrite()
 {
-    if (logQueue == nullptr)
-        return;
+    const char *testFileName = "/fs_selftest.tmp";
+    const char *testContent = "selftest_ok";
 
-    LogRequest req;
-    strncpy(req.message, message.c_str(), sizeof(req.message) - 1);
-    req.message[sizeof(req.message) - 1] = '\0';
-    req.level = level;
-    req.alwaysReport = alwaysReport;
+    File writeFile = LittleFS.open(testFileName, "w");
+    if (!writeFile)
+    {
+        Serial.println("LittleFS-selvtest: kunde inte öppna fil för skrivning");
+        return false;
+    }
+    writeFile.print(testContent);
+    writeFile.close();
 
-    // Timeout 0 = vänta aldrig. Om kön är full kastas meddelandet hellre
-    // än att blockera async_tcp-tasken (vilket var precis det vi ville undvika).
-    xQueueSend(logQueue, &req, 0);
+    File readFile = LittleFS.open(testFileName, "r");
+    if (!readFile)
+    {
+        Serial.println("LittleFS-selvtest: kunde inte öppna fil för läsning");
+        return false;
+    }
+    String readBack = readFile.readString();
+    readFile.close();
+
+    LittleFS.remove(testFileName);
+
+    if (readBack != testContent)
+    {
+        Serial.println("LittleFS-selvtest: läst innehåll matchar inte skrivet innehåll");
+        return false;
+    }
+
+    Serial.println("LittleFS-selvtest: OK");
+    return true;
 }
