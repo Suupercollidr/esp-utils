@@ -31,13 +31,13 @@ void EventLogger::begin()
     if (!sdAvailable)
         Serial.println("Inget SD-kort");
 
-    littleFsAvailable = LittleFS.begin(true);
-
-    if (littleFsAvailable)
-        littleFsAvailable = testLittleFsReadWrite();
+    littleFsAvailable = initAndTestLittleFs();
 
     if (!littleFsAvailable)
-        littleFsErrorReported = true;}
+        littleFsErrorReported = true;
+
+    Serial.println("EventLogger has begun");
+}
 
 void EventLogger::log(const String &originalMessage, LogLevel level, bool alwaysReport)
 {
@@ -398,8 +398,32 @@ uint32_t EventLogger::simpleHash(const String &str)
     return hash;
 }
 
-bool EventLogger::testLittleFsReadWrite()
+bool EventLogger::initAndTestLittleFs()
 {
+    // Kolla först om en data-partition för LittleFS/SPIFFS överhuvudtaget
+    // finns i partitionstabellen - om inte, är begin() dömd att misslyckas.
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA,
+        ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
+        NULL);
+
+    if (part == nullptr)
+    {
+        Serial.println("LittleFS: Ingen SPIFFS/LittleFS-partition hittades i partitionstabellen!");
+        return false;
+    }
+
+    Serial.printf("LittleFS: Hittade partition \"%s\", storlek %u bytes, offset 0x%x\n",
+                  part->label, part->size, part->address);
+
+    bool mounted = LittleFS.begin(true);
+    Serial.print("LittleFS.begin(true) -> ");
+    Serial.println(mounted ? "OK" : "MISSLYCKADES");
+
+    if (!mounted)
+        return false;
+
+    // Läs/skriv-test, som tidigare
     const char *testFileName = "/fs_selftest.tmp";
     const char *testContent = "selftest_ok";
 

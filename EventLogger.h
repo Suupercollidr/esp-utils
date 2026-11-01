@@ -98,7 +98,7 @@ private:
 
     bool checkSDStatus();
 
-    bool testLittleFsReadWrite();
+    bool initAndTestLittleFs();
 
     QueueHandle_t logQueue;
 
